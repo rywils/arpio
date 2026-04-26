@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"time"
@@ -13,6 +14,7 @@ type anyIface struct{ iface *net.Interface }
 type LinuxScanner struct {
 	iface *net.Interface
 	pfx   netip.Prefix
+	self  netip.Addr
 	opts  Options
 }
 
@@ -42,7 +44,7 @@ func NewScanner(opts Options) (Scanner, *scannerCtx, error) {
 		selfMAC:   iface.HardwareAddr.String(),
 	}
 
-	return &LinuxScanner{iface: iface, pfx: pfx, opts: opts}, ctx, nil
+	return &LinuxScanner{iface: iface, pfx: pfx, self: self, opts: opts}, ctx, nil
 }
 
 func (s *LinuxScanner) Scan() ([]Host, error) {
@@ -52,26 +54,15 @@ func (s *LinuxScanner) Scan() ([]Host, error) {
 	}
 	defer c.Close()
 
-	hosts := map[string]Host{}
-	timeout := time.After(s.opts.Timeout)
-
-	// fire requests
-	for ip := s.pfx.Addr(); s.pfx.Contains(ip); ip = ip.Next() {
-		go c.Request(ip)
-	}
-
-	for {
-		select {
-		case <-timeout:
-			return mapToSlice(hosts), nil
-		default:
-			pkt, _, err := c.Read()
-			if err != nil {
-				continue
-			}
-			addHost(pkt.SenderIP, pkt.SenderHardwareAddr, hosts)
+	// fire requests (skip self/network/broadcast)
+	for _, ip := range targetIPv4s(s.pfx, s.self) {
+		if err := c.Request(ip); err != nil {
+			// continue scanning even if one request fails
+			continue
 		}
 	}
+
+	return collectLinuxARP(c, s.opts.Timeout)
 }
 
 func (s *LinuxScanner) Passive() ([]Host, error) {
@@ -81,19 +72,48 @@ func (s *LinuxScanner) Passive() ([]Host, error) {
 	}
 	defer c.Close()
 
-	hosts := map[string]Host{}
-	timeout := time.After(s.opts.Timeout)
+	return collectLinuxARP(c, s.opts.Timeout)
+}
 
+func collectLinuxARP(c *arp.Client, timeout time.Duration) ([]Host, error) {
+	hosts := map[string]Host{}
+	type reply struct {
+		ip  netip.Addr
+		mac net.HardwareAddr
+	}
+	replyCh := make(chan reply, 64)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for {
+			pkt, _, err := c.Read()
+			if err != nil {
+				// Close() on timeout is expected to break Read().
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				continue
+			}
+
+			select {
+			case replyCh <- reply{ip: pkt.SenderIP, mac: pkt.SenderHardwareAddr}:
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	for {
 		select {
-		case <-timeout:
+		case <-timer.C:
+			_ = c.Close()
+			<-done
 			return mapToSlice(hosts), nil
-		default:
-			pkt, _, err := c.Read()
-			if err == nil {
-				addHost(pkt.SenderIP, pkt.SenderHardwareAddr, hosts)
-			}
+		case r := <-replyCh:
+			addHost(r.ip, r.mac, hosts)
 		}
 	}
 }
-

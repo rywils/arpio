@@ -61,7 +61,7 @@ func runScan(args []string) error {
 	enrichVendors(hosts)
 
 	if opts.MDNS {
-		mergeMDNS(hosts, ctx.iface, opts.Timeout)
+		mergeMDNS(hosts, ctx.iface.unwrap(), opts.Timeout)
 	}
 
 	if *jsonOut {
@@ -99,11 +99,10 @@ func runWatch(args []string) error {
 }
 
 func usage() {
-	fmt.Println(`arpio — fast LAN discovery
+	fmt.Print(`arpio — fast LAN discovery
 
 Usage:
   arpio scan  [--json] [--passive] [--iface en0] [--timeout 3s] [--mdns=true|false]
   arpio watch [--passive]          [--iface en0] [--timeout 3s] [--interval 2s] [--mdns=true|false]
 `)
 }
-

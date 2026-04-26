@@ -14,6 +14,9 @@ Single binary.
 * Live watch mode
 * JSON output
 * Auto interface detection or manual override
+* Vendor enrichment via OUI database files (with fallback)
+* Safer scan behavior (skips self/network/broadcast targets)
+* Timeout-safe packet collection in active and passive modes
 
 ---
 
@@ -49,6 +52,11 @@ Disable mDNS
 sudo ./arpio scan --mdns=false
 ```
 
+Set scan timeout
+```bash
+sudo ./arpio scan --timeout 5s
+```
+
 ---
 
 Watch mode (live table)
@@ -62,6 +70,20 @@ Passive watch:
 sudo ./arpio watch --passive
 ```
 
+Disable mDNS in watch mode
+```bash
+sudo ./arpio watch --mdns=false
+```
+
+---
+
+### Output fields
+
+* `IP` - IPv4 address discovered by ARP
+* `MAC` - hardware address
+* `VENDOR` - resolved from OUI prefix if available
+* `HOSTNAME` - inferred from mDNS A/AAAA responses when enabled
+
 ---
 
 Notes
@@ -69,6 +91,30 @@ Notes
 * Linux uses native ARP sockets
 * macOS uses pcap for ARP capture and injection
 * Results depend on network activity and privileges
+* Vendor lookup prefers external OUI data when available:
+  * `ARPIO_OUI_DB` (explicit file path)
+  * `/usr/share/arp-scan/ieee-oui.txt`
+  * `/usr/share/ieee-data/oui.txt`
+  * `/usr/share/misc/oui.txt`
+  * `~/.local/share/arpio/oui.txt` and `~/.config/arpio/oui.txt`
+* Falls back to built-in OUI prefixes when no file is available
+* Supported OUI line formats:
+  * `XX-XX-XX   (base 16)   Vendor Name`
+  * `XX-XX-XX,Vendor Name` or `XX:XX:XX,Vendor Name`
+
+---
+
+### Development
+
+Run local verification:
+
+```bash
+go test ./...
+go build ./...
+go vet ./...
+```
+
+CI runs the same checks on push and pull request.
 
 ---
 

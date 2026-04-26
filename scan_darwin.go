@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -66,9 +67,13 @@ func (s *DarwinScanner) Scan() ([]Host, error) {
 	_ = handle.SetBPFFilter("arp")
 
 	hosts := map[string]Host{}
+	parsed := make(chan Host, 128)
 
 	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		src := gopacket.NewPacketSource(handle, handle.LinkType())
 		for {
 			select {
@@ -78,27 +83,36 @@ func (s *DarwinScanner) Scan() ([]Host, error) {
 				if pkt == nil {
 					continue
 				}
-				if arpLayer := pkt.Layer(layers.LayerTypeARP); arpLayer != nil {
-					arp := arpLayer.(*layers.ARP)
-					ip, ok := netip.AddrFromSlice(arp.SourceProtAddress)
-					if ok && ip.Is4() {
-						addHost(ip, net.HardwareAddr(arp.SourceHwAddress), hosts)
+				if h, ok := hostFromARPPacket(pkt); ok {
+					select {
+					case parsed <- h:
+					default:
 					}
 				}
 			}
 		}
 	}()
 
-	// Inject ARP requests for each IP in subnet
-	for ip := s.pfx.Addr(); s.pfx.Contains(ip); ip = ip.Next() {
-		if !ip.Is4() {
-			continue
-		}
+	// Inject ARP requests for each usable host IP in subnet.
+	for _, ip := range targetIPv4s(s.pfx, s.self) {
 		_ = s.sendARPRequest(handle, ip)
 	}
 
-	time.Sleep(s.opts.Timeout)
+	timer := time.NewTimer(s.opts.Timeout)
+	defer timer.Stop()
+loop:
+	for {
+		select {
+		case h := <-parsed:
+			addHost(h.IP, h.MAC, hosts)
+		case <-timer.C:
+			break loop
+		}
+	}
+
 	close(stop)
+	handle.Close()
+	wg.Wait()
 
 	return mapToSlice(hosts), nil
 }
@@ -113,24 +127,64 @@ func (s *DarwinScanner) Passive() ([]Host, error) {
 	_ = handle.SetBPFFilter("arp")
 
 	hosts := map[string]Host{}
-	src := gopacket.NewPacketSource(handle, handle.LinkType())
-	deadline := time.Now().Add(s.opts.Timeout)
-
-	for time.Now().Before(deadline) {
-		pkt := <-src.Packets()
-		if pkt == nil {
-			continue
-		}
-		if arpLayer := pkt.Layer(layers.LayerTypeARP); arpLayer != nil {
-			arp := arpLayer.(*layers.ARP)
-			ip, ok := netip.AddrFromSlice(arp.SourceProtAddress)
-			if ok && ip.Is4() {
-				addHost(ip, net.HardwareAddr(arp.SourceHwAddress), hosts)
+	parsed := make(chan Host, 128)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		src := gopacket.NewPacketSource(handle, handle.LinkType())
+		for {
+			select {
+			case <-stop:
+				return
+			case pkt := <-src.Packets():
+				if pkt == nil {
+					continue
+				}
+				if h, ok := hostFromARPPacket(pkt); ok {
+					select {
+					case parsed <- h:
+					default:
+					}
+				}
 			}
+		}
+	}()
+
+	timer := time.NewTimer(s.opts.Timeout)
+	defer timer.Stop()
+loop:
+	for {
+		select {
+		case h := <-parsed:
+			addHost(h.IP, h.MAC, hosts)
+		case <-timer.C:
+			break loop
 		}
 	}
 
+	close(stop)
+	handle.Close()
+	wg.Wait()
+
 	return mapToSlice(hosts), nil
+}
+
+func hostFromARPPacket(pkt gopacket.Packet) (Host, bool) {
+	arpLayer := pkt.Layer(layers.LayerTypeARP)
+	if arpLayer == nil {
+		return Host{}, false
+	}
+
+	arpPkt := arpLayer.(*layers.ARP)
+	ip, ok := netip.AddrFromSlice(arpPkt.SourceProtAddress)
+	if !ok || !ip.Is4() {
+		return Host{}, false
+	}
+
+	mac := net.HardwareAddr(arpPkt.SourceHwAddress)
+	return Host{IP: ip, MAC: mac, MACStr: mac.String()}, true
 }
 
 func (s *DarwinScanner) sendARPRequest(handle *pcap.Handle, target netip.Addr) error {
@@ -154,9 +208,9 @@ func (s *DarwinScanner) sendARPRequest(handle *pcap.Handle, target netip.Addr) e
 		ProtAddressSize:   4,
 		Operation:         layers.ARPRequest,
 		SourceHwAddress:   []byte(srcMAC),
-		SourceProtAddress: s.self.AsSlice(),  // 4 bytes
+		SourceProtAddress: s.self.AsSlice(), // 4 bytes
 		DstHwAddress:      []byte{0, 0, 0, 0, 0, 0},
-		DstProtAddress:    target.AsSlice(),  // 4 bytes
+		DstProtAddress:    target.AsSlice(), // 4 bytes
 	}
 
 	buf := gopacket.NewSerializeBuffer()
@@ -167,4 +221,3 @@ func (s *DarwinScanner) sendARPRequest(handle *pcap.Handle, target netip.Addr) e
 
 	return handle.WritePacketData(buf.Bytes())
 }
-

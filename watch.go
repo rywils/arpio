@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"time"
@@ -84,4 +85,3 @@ func sortedHosts(m map[string]Host) []Host {
 func clearScreen() {
 	fmt.Print("\033[2J\033[H")
 }
-
