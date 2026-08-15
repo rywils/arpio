@@ -115,7 +115,7 @@ func addPTRAnswers(m *dns.Msg, arpaToIP, out map[string]string) {
 		if !ok {
 			continue
 		}
-		if ip, ok := arpaToIP[ptr.Hdr.Name]; ok {
+		if ip, ok := arpaToIP[strings.ToLower(ptr.Hdr.Name)]; ok {
 			out[ip] = strings.TrimSuffix(ptr.Ptr, ".")
 		}
 	}
