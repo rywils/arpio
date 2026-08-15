@@ -53,6 +53,18 @@ func mdnsReverseLookup(iface *net.Interface, targets []netip.Addr, timeout time.
 
 	_ = conn.SetReadBuffer(1 << 20)
 
+	arpaToIP := sendReversePTRQueries(conn, addr, targets)
+	if len(arpaToIP) == 0 {
+		return out
+	}
+
+	return collectPTRResponses(conn, arpaToIP, timeout)
+}
+
+// sendReversePTRQueries fires one PTR query per target IP and returns a map
+// from the queried "<ip>.in-addr.arpa." name back to the original IP string,
+// so replies can be matched to the host that prompted them.
+func sendReversePTRQueries(conn *net.UDPConn, addr *net.UDPAddr, targets []netip.Addr) map[string]string {
 	arpaToIP := map[string]string{}
 	for _, ip := range targets {
 		name := reverseArpaName(ip)
@@ -67,10 +79,13 @@ func mdnsReverseLookup(iface *net.Interface, targets []netip.Addr, timeout time.
 			_, _ = conn.WriteToUDP(b, addr)
 		}
 	}
-	if len(arpaToIP) == 0 {
-		return out
-	}
+	return arpaToIP
+}
 
+// collectPTRResponses reads replies until timeout, resolving arpaToIP
+// entries to the hostnames carried in matching PTR answers.
+func collectPTRResponses(conn *net.UDPConn, arpaToIP map[string]string, timeout time.Duration) map[string]string {
+	out := map[string]string{}
 	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 65536)
 
@@ -86,18 +101,24 @@ func mdnsReverseLookup(iface *net.Interface, targets []netip.Addr, timeout time.
 			continue
 		}
 
-		for _, rr := range append(m.Answer, m.Extra...) {
-			ptr, ok := rr.(*dns.PTR)
-			if !ok {
-				continue
-			}
-			if ip, ok := arpaToIP[ptr.Hdr.Name]; ok {
-				out[ip] = strings.TrimSuffix(ptr.Ptr, ".")
-			}
-		}
+		addPTRAnswers(m, arpaToIP, out)
 	}
 
 	return out
+}
+
+// addPTRAnswers copies any PTR answer in m whose queried name is in
+// arpaToIP into out, keyed by the original IP.
+func addPTRAnswers(m *dns.Msg, arpaToIP, out map[string]string) {
+	for _, rr := range append(m.Answer, m.Extra...) {
+		ptr, ok := rr.(*dns.PTR)
+		if !ok {
+			continue
+		}
+		if ip, ok := arpaToIP[ptr.Hdr.Name]; ok {
+			out[ip] = strings.TrimSuffix(ptr.Ptr, ".")
+		}
+	}
 }
 
 func reverseArpaName(ip netip.Addr) string {
