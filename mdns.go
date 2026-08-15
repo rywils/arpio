@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -9,7 +11,17 @@ import (
 )
 
 func mergeMDNS(hosts []Host, iface *net.Interface, timeout time.Duration) {
-	nameByIP := mdnsNameByIP(iface, timeout)
+	var need []netip.Addr
+	for _, h := range hosts {
+		if h.Hostname == "" && h.IP.Is4() {
+			need = append(need, h.IP)
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
+
+	nameByIP := mdnsReverseLookup(iface, need, timeout)
 	if len(nameByIP) == 0 {
 		return
 	}
@@ -24,11 +36,15 @@ func mergeMDNS(hosts []Host, iface *net.Interface, timeout time.Duration) {
 	}
 }
 
-func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string {
+// mdnsReverseLookup resolves hostnames via mDNS reverse PTR queries
+// (RFC 6762 §12), the mechanism dns-sd/avahi-resolve-address use to turn
+// an IP back into a name. Querying the DNS-SD service-enumeration name
+// only returns pointers to service types, never host A/AAAA records, so
+// it can't be used for this.
+func mdnsReverseLookup(iface *net.Interface, targets []netip.Addr, timeout time.Duration) map[string]string {
 	out := map[string]string{}
 
 	addr := &net.UDPAddr{IP: net.ParseIP("224.0.0.251"), Port: 5353}
-
 	conn, err := net.ListenMulticastUDP("udp4", iface, addr)
 	if err != nil {
 		return out
@@ -37,18 +53,23 @@ func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string
 
 	_ = conn.SetReadBuffer(1 << 20)
 
-	// Query for "any" records.
-	q := new(dns.Msg)
-	q.SetQuestion(dns.Fqdn("_services._dns-sd._udp.local"), dns.TypePTR)
+	arpaToIP := map[string]string{}
+	for _, ip := range targets {
+		name := reverseArpaName(ip)
+		if name == "" {
+			continue
+		}
+		arpaToIP[name] = ip.String()
 
-	b, err := q.Pack()
-	if err != nil {
+		q := new(dns.Msg)
+		q.SetQuestion(name, dns.TypePTR)
+		if b, err := q.Pack(); err == nil {
+			_, _ = conn.WriteToUDP(b, addr)
+		}
+	}
+	if len(arpaToIP) == 0 {
 		return out
 	}
-
-	_, _ = conn.WriteToUDP(b, addr)
-	time.Sleep(50 * time.Millisecond)
-	_, _ = conn.WriteToUDP(b, addr)
 
 	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 65536)
@@ -66,18 +87,23 @@ func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string
 		}
 
 		for _, rr := range append(m.Answer, m.Extra...) {
-			switch t := rr.(type) {
-			case *dns.A:
-				ip := t.A.String()
-				name := strings.TrimSuffix(t.Hdr.Name, ".")
-				out[ip] = name
-			case *dns.AAAA:
-				ip := t.AAAA.String()
-				name := strings.TrimSuffix(t.Hdr.Name, ".")
-				out[ip] = name
+			ptr, ok := rr.(*dns.PTR)
+			if !ok {
+				continue
+			}
+			if ip, ok := arpaToIP[ptr.Hdr.Name]; ok {
+				out[ip] = strings.TrimSuffix(ptr.Ptr, ".")
 			}
 		}
 	}
 
 	return out
+}
+
+func reverseArpaName(ip netip.Addr) string {
+	if !ip.Is4() {
+		return ""
+	}
+	b := ip.As4()
+	return fmt.Sprintf("%d.%d.%d.%d.in-addr.arpa.", b[3], b[2], b[1], b[0])
 }
