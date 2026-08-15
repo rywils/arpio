@@ -10,8 +10,6 @@ import (
 	"github.com/mdlayher/arp"
 )
 
-type anyIface struct{ iface *net.Interface }
-
 type LinuxScanner struct {
 	iface *net.Interface
 	pfx   netip.Prefix
