@@ -13,8 +13,6 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
-type anyIface struct{ iface *net.Interface }
-
 type DarwinScanner struct {
 	iface *net.Interface
 	pfx   netip.Prefix
@@ -63,85 +61,58 @@ func (s *DarwinScanner) Scan() ([]Host, error) {
 		return nil, fmt.Errorf("refusing to scan %s: too many hosts (narrow the interface's subnet or use -passive)", s.pfx)
 	}
 
-	handle, err := pcap.OpenLive(s.iface.Name, 65536, true, pcap.BlockForever)
+	capture, err := openDarwinCapture(s.iface.Name)
 	if err != nil {
 		return nil, err
 	}
-	defer handle.Close()
+	defer capture.close()
 
-	_ = handle.SetBPFFilter("arp")
-
-	hosts := map[string]Host{}
-	parsed := make(chan Host, 128)
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		src := gopacket.NewPacketSource(handle, handle.LinkType())
-		for {
-			select {
-			case <-stop:
-				return
-			case pkt := <-src.Packets():
-				if pkt == nil {
-					continue
-				}
-				if h, ok := hostFromARPPacket(pkt); ok {
-					select {
-					case parsed <- h:
-					default:
-					}
-				}
-			}
-		}
-	}()
-
-	// Inject ARP requests for each usable host IP in subnet.
 	for _, ip := range targetIPv4s(s.pfx, s.self) {
-		_ = s.sendARPRequest(handle, ip)
+		_ = s.sendARPRequest(capture.handle, ip)
 	}
 
-	timer := time.NewTimer(s.opts.Timeout)
-	defer timer.Stop()
-loop:
-	for {
-		select {
-		case h := <-parsed:
-			addHost(h.IP, h.MAC, hosts)
-		case <-timer.C:
-			break loop
-		}
-	}
-
-	close(stop)
-	handle.Close()
-	wg.Wait()
-
-	return mapToSlice(hosts), nil
+	return collectDarwinARP(capture.parsed, s.opts.Timeout), nil
 }
 
 func (s *DarwinScanner) Passive() ([]Host, error) {
-	handle, err := pcap.OpenLive(s.iface.Name, 65536, true, pcap.BlockForever)
+	capture, err := openDarwinCapture(s.iface.Name)
 	if err != nil {
 		return nil, err
 	}
-	defer handle.Close()
+	defer capture.close()
 
+	return collectDarwinARP(capture.parsed, s.opts.Timeout), nil
+}
+
+// darwinCapture is a live pcap handle plus the goroutine parsing ARP packets
+// off it, shared by Scan and Passive.
+type darwinCapture struct {
+	handle *pcap.Handle
+	parsed chan Host
+	stop   chan struct{}
+	wg     sync.WaitGroup
+}
+
+func openDarwinCapture(ifaceName string) (*darwinCapture, error) {
+	handle, err := pcap.OpenLive(ifaceName, 65536, true, pcap.BlockForever)
+	if err != nil {
+		return nil, err
+	}
 	_ = handle.SetBPFFilter("arp")
 
-	hosts := map[string]Host{}
-	parsed := make(chan Host, 128)
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
+	c := &darwinCapture{
+		handle: handle,
+		parsed: make(chan Host, 128),
+		stop:   make(chan struct{}),
+	}
+
+	c.wg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer c.wg.Done()
 		src := gopacket.NewPacketSource(handle, handle.LinkType())
 		for {
 			select {
-			case <-stop:
+			case <-c.stop:
 				return
 			case pkt := <-src.Packets():
 				if pkt == nil {
@@ -149,7 +120,7 @@ func (s *DarwinScanner) Passive() ([]Host, error) {
 				}
 				if h, ok := hostFromARPPacket(pkt); ok {
 					select {
-					case parsed <- h:
+					case c.parsed <- h:
 					default:
 					}
 				}
@@ -157,23 +128,28 @@ func (s *DarwinScanner) Passive() ([]Host, error) {
 		}
 	}()
 
-	timer := time.NewTimer(s.opts.Timeout)
+	return c, nil
+}
+
+func (c *darwinCapture) close() {
+	close(c.stop)
+	c.handle.Close()
+	c.wg.Wait()
+}
+
+func collectDarwinARP(parsed <-chan Host, timeout time.Duration) []Host {
+	hosts := map[string]Host{}
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-loop:
+
 	for {
 		select {
 		case h := <-parsed:
 			addHost(h.IP, h.MAC, hosts)
 		case <-timer.C:
-			break loop
+			return mapToSlice(hosts)
 		}
 	}
-
-	close(stop)
-	handle.Close()
-	wg.Wait()
-
-	return mapToSlice(hosts), nil
 }
 
 func hostFromARPPacket(pkt gopacket.Packet) (Host, bool) {

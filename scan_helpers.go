@@ -5,6 +5,10 @@ import (
 	"net/netip"
 )
 
+// anyIface wraps *net.Interface so it can travel inside scannerCtx without
+// scan_linux.go and scan_darwin.go each needing their own copy of the type.
+type anyIface struct{ iface *net.Interface }
+
 func addHost(ip netip.Addr, mac net.HardwareAddr, hosts map[string]Host) {
 	key := ip.String()
 	if _, ok := hosts[key]; ok {
