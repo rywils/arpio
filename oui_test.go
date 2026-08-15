@@ -8,12 +8,12 @@ import (
 func TestEnrichVendorsUsesPrefix(t *testing.T) {
 	hosts := []Host{
 		{MACStr: "3c:22:fb:11:22:33"},
-		{MACStr: "00:11:22:33:44:55"},
+		{MACStr: "02:00:00:00:00:01"}, // locally administered, never a real IEEE-assigned OUI
 	}
 
 	enrichVendors(hosts)
 
-	if hosts[0].Vendor != "Apple" {
+	if !strings.Contains(hosts[0].Vendor, "Apple") {
 		t.Fatalf("expected Apple vendor, got %q", hosts[0].Vendor)
 	}
 	if hosts[1].Vendor != "" {

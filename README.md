@@ -15,7 +15,7 @@ Single binary.
 * JSON output
 * Auto interface detection or manual override
 * Vendor enrichment via OUI database files (with fallback)
-* Safer scan behavior (skips self/network/broadcast targets)
+* Safer scan behavior (skips self/network/broadcast targets, refuses subnets wider than /16)
 * Timeout-safe packet collection in active and passive modes
 
 ---
@@ -82,7 +82,7 @@ sudo ./arpio watch --mdns=false
 * `IP` - IPv4 address discovered by ARP
 * `MAC` - hardware address
 * `VENDOR` - resolved from OUI prefix if available
-* `HOSTNAME` - inferred from mDNS A/AAAA responses when enabled
+* `HOSTNAME` - resolved via mDNS reverse PTR lookup when enabled
 
 ---
 
@@ -96,6 +96,8 @@ Notes
   * `/usr/share/arp-scan/ieee-oui.txt`
   * `/usr/share/ieee-data/oui.txt`
   * `/usr/share/misc/oui.txt`
+  * `/opt/homebrew/share/arp-scan/ieee-oui.txt` and `/opt/homebrew/share/ieee-data/oui.txt` (Homebrew, Apple Silicon)
+  * `/usr/local/share/arp-scan/ieee-oui.txt` and `/usr/local/share/ieee-data/oui.txt` (Homebrew, Intel Mac)
   * `~/.local/share/arpio/oui.txt` and `~/.config/arpio/oui.txt`
 * Falls back to built-in OUI prefixes when no file is available
 * Supported OUI line formats:

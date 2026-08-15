@@ -57,7 +57,7 @@ func watchLoop(scanner Scanner, ctx *scannerCtx, opts Options, passive bool) err
 
 		clearScreen()
 		fmt.Printf(
-			"arpio watch — iface=%s subnet=%s refresh=%s\n\n",
+			"arpio watch - iface=%s subnet=%s refresh=%s\n\n",
 			ctx.ifaceName,
 			ctx.subnet.String(),
 			opts.Interval,
