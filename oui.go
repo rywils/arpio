@@ -69,6 +69,10 @@ func candidateOUIPaths() []string {
 		"/usr/share/arp-scan/ieee-oui.txt",
 		"/usr/share/ieee-data/oui.txt",
 		"/usr/share/misc/oui.txt",
+		"/opt/homebrew/share/arp-scan/ieee-oui.txt", // Homebrew, Apple Silicon
+		"/opt/homebrew/share/ieee-data/oui.txt",
+		"/usr/local/share/arp-scan/ieee-oui.txt", // Homebrew, Intel Mac
+		"/usr/local/share/ieee-data/oui.txt",
 	)
 
 	if home, err := os.UserHomeDir(); err == nil && home != "" {

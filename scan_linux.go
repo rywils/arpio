@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"time"
@@ -48,6 +49,10 @@ func NewScanner(opts Options) (Scanner, *scannerCtx, error) {
 }
 
 func (s *LinuxScanner) Scan() ([]Host, error) {
+	if subnetTooLarge(s.pfx) {
+		return nil, fmt.Errorf("refusing to scan %s: too many hosts (narrow the interface's subnet or use -passive)", s.pfx)
+	}
+
 	c, err := arp.Dial(s.iface)
 	if err != nil {
 		return nil, err

@@ -37,7 +37,7 @@ func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string
 
 	_ = conn.SetReadBuffer(1 << 20)
 
-	// Query for "any" records. 
+	// Query for "any" records.
 	q := new(dns.Msg)
 	q.SetQuestion(dns.Fqdn("_services._dns-sd._udp.local"), dns.TypePTR)
 
@@ -65,7 +65,6 @@ func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string
 			continue
 		}
 
-
 		for _, rr := range append(m.Answer, m.Extra...) {
 			switch t := rr.(type) {
 			case *dns.A:
@@ -82,4 +81,3 @@ func mdnsNameByIP(iface *net.Interface, timeout time.Duration) map[string]string
 
 	return out
 }
-

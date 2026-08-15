@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -58,6 +59,10 @@ func NewScanner(opts Options) (Scanner, *scannerCtx, error) {
 }
 
 func (s *DarwinScanner) Scan() ([]Host, error) {
+	if subnetTooLarge(s.pfx) {
+		return nil, fmt.Errorf("refusing to scan %s: too many hosts (narrow the interface's subnet or use -passive)", s.pfx)
+	}
+
 	handle, err := pcap.OpenLive(s.iface.Name, 65536, true, pcap.BlockForever)
 	if err != nil {
 		return nil, err

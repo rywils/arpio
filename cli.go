@@ -99,7 +99,7 @@ func runWatch(args []string) error {
 }
 
 func usage() {
-	fmt.Print(`arpio — fast LAN discovery
+	fmt.Print(`arpio - fast LAN discovery
 
 Usage:
   arpio scan  [--json] [--passive] [--iface en0] [--timeout 3s] [--mdns=true|false]

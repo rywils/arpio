@@ -28,6 +28,13 @@ func mapToSlice(m map[string]Host) []Host {
 	return out
 }
 
+// subnetTooLarge reports whether pfx has more hosts than we're willing to
+// ARP-request in one pass (widest allowed is a /16, ~65k addresses).
+func subnetTooLarge(pfx netip.Prefix) bool {
+	bits := pfx.Bits()
+	return bits >= 0 && bits < 16
+}
+
 func targetIPv4s(pfx netip.Prefix, self netip.Addr) []netip.Addr {
 	if !pfx.Addr().Is4() {
 		return nil

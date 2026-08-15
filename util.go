@@ -69,4 +69,3 @@ func firstIPv4Net(iface *net.Interface) (*net.IPNet, error) {
 	}
 	return nil, errors.New("no IPv4 address found on interface")
 }
-
