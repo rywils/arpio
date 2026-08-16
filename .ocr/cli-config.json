@@ -1,0 +1,13 @@
+{
+  "configuredTools": [
+    "claude",
+    "codex",
+    "cursor",
+    "gemini",
+    "github-copilot",
+    "opencode",
+    "windsurf"
+  ],
+  "lastUpdated": "2026-08-15T23:08:25.718Z",
+  "cliVersion": "2.5.0"
+}
